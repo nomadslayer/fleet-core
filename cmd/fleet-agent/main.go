@@ -53,6 +53,14 @@ func main() {
 		hb := fs.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 		me := fs.Duration("metrics-interval", 10*time.Second, "live metrics push interval (0 disables)")
 		tp := fs.Int("top-processes", 5, "number of top processes by CPU to include per sample")
+		// Self-enrolment. A DaemonSet or a scratch/distroless image has no
+		// shell to run "enroll then run" in, and the image deliberately ships
+		// none — so run enrols itself when it has a token and no identity yet.
+		// Existing identity always wins, so a restart never burns another
+		// token use or leaves a duplicate machine record behind.
+		token := fs.String("token", os.Getenv("FLEET_TOKEN"), "enrollment token; used only if not already enrolled (or FLEET_TOKEN)")
+		fp := fs.String("fingerprint", os.Getenv("FLEET_CA_FINGERPRINT"), "sha256 fingerprint of the control-plane CA (or FLEET_CA_FINGERPRINT)")
+		name := fs.String("name", hostnameOr(""), "machine display name used when self-enrolling")
 		_ = fs.Parse(os.Args[2:])
 		if *server == "" {
 			fmt.Fprintln(os.Stderr, "run requires --server")
@@ -60,8 +68,15 @@ func main() {
 		}
 		a := &agent.Agent{ServerURL: *server, DataDir: *data, Log: log, Heartbeat: *hb, MetricsEvery: *me, TopProcesses: *tp}
 		if !a.Enrolled() {
-			log.Error("not enrolled; run `fleet-agent enroll` first")
-			os.Exit(1)
+			if *token == "" {
+				log.Error("not enrolled; run `fleet-agent enroll` first, or pass --token to self-enroll")
+				os.Exit(1)
+			}
+			log.Info("no identity yet; self-enrolling", "name", *name)
+			if err := a.Enroll(*token, *name, *fp); err != nil {
+				log.Error("self-enroll failed", "err", err)
+				os.Exit(1)
+			}
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

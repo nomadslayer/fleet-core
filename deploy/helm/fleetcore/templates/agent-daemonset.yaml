@@ -45,24 +45,17 @@ spec:
         - name: fleet-agent
           image: {{ include "fleetcore.serverImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: [/bin/sh, -c]
+          command: [/usr/local/bin/fleet-agent]
+          # No shell wrapper: the runtime image is distroless and ships no
+          # /bin/sh. "run" self-enrols when it has a token and no identity,
+          # so enrolment and running are one process with no init container.
           args:
-            - |
-              set -eu
-              # Enrol once per node; the identity persists on the host path so
-              # a pod restart keeps it rather than consuming another token use
-              # and leaving a stale machine record behind.
-              if [ ! -f /var/lib/fleet-agent/cert.pem ]; then
-                /usr/local/bin/fleet-agent enroll \
-                  --server "$FLEET_SERVER" --token "$FLEET_TOKEN" \
-                  --name "${NODE_NAME:-$(hostname)}" \
-                  ${FLEET_CA_FINGERPRINT:+--fingerprint "$FLEET_CA_FINGERPRINT"}
-              fi
-              exec /usr/local/bin/fleet-agent run \
-                --server "$FLEET_SERVER" \
-                --metrics-interval "$FLEET_METRICS" \
-                --heartbeat "$FLEET_HEARTBEAT" \
-                --top-processes "$FLEET_TOPN"
+            - run
+            - --server=$(FLEET_SERVER)
+            - --name=$(NODE_NAME)
+            - --metrics-interval={{ .Values.agent.metricsInterval }}
+            - --heartbeat={{ .Values.agent.heartbeat }}
+            - --top-processes={{ .Values.agent.topProcesses }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
@@ -73,12 +66,6 @@ spec:
                 secretKeyRef: {name: {{ $secret }}, key: FLEET_TOKEN}
             - name: FLEET_CA_FINGERPRINT
               value: {{ .Values.agent.caFingerprint | quote }}
-            - name: FLEET_METRICS
-              value: {{ .Values.agent.metricsInterval | quote }}
-            - name: FLEET_HEARTBEAT
-              value: {{ .Values.agent.heartbeat | quote }}
-            - name: FLEET_TOPN
-              value: {{ .Values.agent.topProcesses | quote }}
             {{- if .Values.agent.kubelet.url }}
             - name: FLEET_KUBELET_URL
               value: {{ .Values.agent.kubelet.url | quote }}
