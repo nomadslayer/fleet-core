@@ -1,0 +1,44 @@
+{{- if .Values.controlPlane.enabled }}
+{{- $full := include "fleetcore.fullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+  {{- with .Values.controlPlane.service.agent.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Agent API only. mTLS terminates in the process, so anything in front of
+  # this must pass TCP through untouched — an L7 Ingress that terminates TLS
+  # strips the client certificate the server authenticates with.
+  type: {{ .Values.controlPlane.service.agent.type }}
+  ports:
+    - name: agent
+      port: {{ .Values.controlPlane.service.agent.port }}
+      targetPort: agent
+      protocol: TCP
+      {{- if and .Values.controlPlane.service.agent.nodePort (eq .Values.controlPlane.service.agent.type "NodePort") }}
+      nodePort: {{ .Values.controlPlane.service.agent.nodePort }}
+      {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ include "fleetcore.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: control-plane
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-admin
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+spec:
+  # Deliberately a separate service so the admin surface is never exposed by
+  # widening the agent one. Bearer token is the only guard — keep ClusterIP.
+  type: {{ .Values.controlPlane.service.admin.type }}
+  ports:
+    - {name: admin, port: {{ .Values.controlPlane.service.admin.port }}, targetPort: admin, protocol: TCP}
+  selector:
+    app.kubernetes.io/name: {{ include "fleetcore.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: control-plane
+{{- end }}

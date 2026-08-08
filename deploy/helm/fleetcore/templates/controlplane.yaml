@@ -1,0 +1,93 @@
+{{- if .Values.controlPlane.enabled }}
+{{- $full := include "fleetcore.fullname" . -}}
+{{- $secret := .Values.controlPlane.existingSecret | default (printf "%s-admin" $full) -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $full }}
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $full }}
+  # Pinned to 1 by fleetcore.validate; see values.yaml for why this is not HA.
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "fleetcore.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        {{- include "fleetcore.labels" . | nindent 8 }}
+        app.kubernetes.io/component: control-plane
+    spec:
+      securityContext:
+        # Matches the distroless nonroot image; the PVC must be group-writable
+        # by this fsGroup or CA init fails with a permission error.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: fleet-server
+          image: {{ include "fleetcore.serverImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --data=/var/lib/fleet-server
+            - --agent-addr=:{{ .Values.controlPlane.service.agent.port }}
+            - --admin-addr=0.0.0.0:{{ .Values.controlPlane.service.admin.port }}
+            - --binaries=/srv/binaries
+            - --san={{ include "fleetcore.sans" . }}
+            - --max-command-history={{ .Values.controlPlane.maxCommandHistory }}
+          env:
+            - name: FLEET_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ $secret }}, key: FLEET_ADMIN_TOKEN}
+            {{- if .Values.controlPlane.dbUrl }}
+            - name: FLEET_DB_URL
+              value: {{ .Values.controlPlane.dbUrl | quote }}
+            {{- end }}
+            {{- if .Values.controlPlane.dbToken }}
+            - name: FLEET_DB_TOKEN
+              value: {{ .Values.controlPlane.dbToken | quote }}
+            {{- end }}
+          ports:
+            - {name: agent, containerPort: {{ .Values.controlPlane.service.agent.port }}}
+            - {name: admin, containerPort: {{ .Values.controlPlane.service.admin.port }}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/fleet-server}
+      {{- with .Values.controlPlane.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if not .Values.controlPlane.persistence.enabled }}
+      volumes:
+        - {name: data, emptyDir: {}}
+      {{- end }}
+  {{- if .Values.controlPlane.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.controlPlane.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.controlPlane.persistence.size }}
+  {{- end }}
+{{- end }}

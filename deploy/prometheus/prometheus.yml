@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: fleetcore
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # The control plane's admin listener. Same bearer token as the rest of
+  # the admin API — read from a file so the token never lands in this
+  # config (prom-init writes it from $FLEET_ADMIN_TOKEN at startup).
+  #
+  # Reached over the internal compose network, so plain HTTP is fine:
+  # the admin port is never published beyond 127.0.0.1 on the host.
+  - job_name: fleetcore
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/fleet/admin_token
+    static_configs:
+      - targets: ["control-plane:8080"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

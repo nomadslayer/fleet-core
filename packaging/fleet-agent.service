@@ -1,0 +1,19 @@
+[Unit]
+Description=fleetcore agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fleet-agent run --server https://YOUR_CONTROL_PLANE:8443
+Restart=always
+RestartSec=5
+# Hardening. Modules run as children, so keep only what they need:
+# tighten further per-module once a supervisor module exists.
+NoNewPrivileges=no
+ProtectHome=read-only
+StateDirectory=fleet-agent
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

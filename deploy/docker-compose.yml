@@ -1,0 +1,102 @@
+# fleetcore control plane + self-hosted libSQL (Turso-compatible).
+#
+#   export FLEET_ADMIN_TOKEN=$(openssl rand -hex 24)
+#   export FLEET_SAN=cp.example.com          # public DNS name agents dial
+#   docker compose up -d
+#
+# Agent API (:8443, mTLS) must be reachable by every machine.
+# Admin API (:8080, bearer) — do NOT expose publicly; reach it via the
+# reverse proxy with TLS, an SSH tunnel, or a private network only.
+# Prometheus UI (:9090) is bound to localhost for the same reason.
+
+services:
+  sqld:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    restart: unless-stopped
+    environment:
+      # Unauthenticated is acceptable ONLY because sqld is not published
+      # to the host — it is reachable solely on the internal compose
+      # network. For auth, set SQLD_AUTH_JWT_KEY and pass --db-token.
+      SQLD_NODE: primary
+    volumes:
+      - sqld-data:/var/lib/sqld
+    # bottomless S3 backup (one region). Uncomment and fill to enable:
+    # environment:
+    #   LIBSQL_BOTTOMLESS_BUCKET: fleetcore-backup
+    #   LIBSQL_BOTTOMLESS_ENDPOINT: https://s3.ap-southeast-1.amazonaws.com
+    #   LIBSQL_BOTTOMLESS_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    #   LIBSQL_BOTTOMLESS_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    networks: [internal]
+
+  control-plane:
+    build: ..
+    image: fleetcore:latest
+    restart: unless-stopped
+    depends_on: [sqld]
+    environment:
+      FLEET_ADMIN_TOKEN: ${FLEET_ADMIN_TOKEN:?set FLEET_ADMIN_TOKEN}
+      FLEET_DB_URL: http://sqld:8080
+    command:
+      - --data=/var/lib/fleet-server
+      - --agent-addr=:8443
+      - --admin-addr=0.0.0.0:8080
+      - --binaries=/srv/binaries
+      # Ad-hoc commands live in desired state, which is resent on every
+      # reconcile — so retention is capped per group/machine. Oldest are
+      # dropped and their signed payloads deleted from the store.
+      - --max-command-history=${FLEET_COMMAND_HISTORY:-20}
+      - --san=${FLEET_SAN:?set FLEET_SAN to the public hostname}
+    ports:
+      - "8443:8443"          # agent API — public
+      - "127.0.0.1:8080:8080" # admin API — localhost only; tunnel to reach it
+    volumes:
+      - cp-data:/var/lib/fleet-server   # CA + module-signing keys live here — back this up
+    networks: [internal, default]
+
+  # Materialises the admin token as a file so it stays out of
+  # prometheus.yml and out of the image. Runs to completion on every
+  # `up`, then prometheus starts.
+  prom-init:
+    image: busybox:1.36
+    environment:
+      FLEET_ADMIN_TOKEN: ${FLEET_ADMIN_TOKEN:?set FLEET_ADMIN_TOKEN}
+    command:
+      - sh
+      - -c
+      - printf %s "$$FLEET_ADMIN_TOKEN" > /run/fleet/admin_token && chmod 0644 /run/fleet/admin_token
+    volumes:
+      - prom-secrets:/run/fleet
+    networks: [internal]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    depends_on:
+      control-plane:
+        condition: service_started
+      prom-init:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prom-secrets:/run/fleet:ro
+      - prom-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"  # UI — localhost only, same posture as the admin API
+    networks: [internal, default]
+
+volumes:
+  sqld-data:
+  cp-data:
+  prom-data:
+  prom-secrets:
+
+networks:
+  internal:
+    internal: true
+  default:

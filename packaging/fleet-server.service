@@ -1,0 +1,19 @@
+[Unit]
+Description=fleetcore control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=FLEET_ADMIN_TOKEN=CHANGE_ME
+ExecStart=/usr/local/bin/fleet-server --data /var/lib/fleet-server --agent-addr :8443 --admin-addr 127.0.0.1:8080 --san cp.example.com
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+StateDirectory=fleet-server
+ReadWritePaths=/var/lib/fleet-server
+
+[Install]
+WantedBy=multi-user.target

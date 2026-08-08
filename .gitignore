@@ -1,0 +1,7 @@
+bin/
+dist/
+*.log
+
+# Holds FLEET_ADMIN_TOKEN — the admin credential. Never commit.
+deploy/.env
+.gstack/

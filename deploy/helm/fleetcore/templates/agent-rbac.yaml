@@ -1,0 +1,30 @@
+{{- if and .Values.agent.enabled .Values.agent.rbac.create }}
+{{- $full := include "fleetcore.fullname" . -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-agent
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $full }}-agent
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+rules:
+  # nodes/stats is what the kubelet Summary API authorises against. Without
+  # it the agent still reports pod usage, but from cgroups only — which
+  # yields a pod UID and no namespace/name until /var/log/pods is readable.
+  - apiGroups: [""]
+    resources: [nodes/stats, nodes/proxy, nodes/metrics]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $full }}-agent
+  labels: {{- include "fleetcore.labels" . | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $full }}-agent}
+subjects:
+  - {kind: ServiceAccount, name: {{ $full }}-agent, namespace: {{ .Release.Namespace }}}
+{{- end }}

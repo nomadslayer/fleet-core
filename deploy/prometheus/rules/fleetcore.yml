@@ -1,0 +1,79 @@
+# Mirror of what the control plane serves at GET /metrics/alerts.
+# Refresh with:
+#   curl -s -H "Authorization: Bearer $FLEET_ADMIN_TOKEN" \
+#     http://127.0.0.1:8080/metrics/alerts > prometheus/rules/fleetcore.yml
+#   docker compose exec prometheus kill -HUP 1
+groups:
+  - name: fleetcore
+    rules:
+      - alert: FleetMachineDown
+        expr: time() - fleet_machine_last_seen_timestamp_seconds > 120
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Machine {{ $labels.name }} is not reporting"
+          description: "No heartbeat from {{ $labels.name }} ({{ $labels.machine_id }}) for over 2 minutes."
+
+      - alert: FleetDiskAlmostFull
+        expr: (fleet_live_disk_used_bytes / fleet_live_disk_total_bytes) > 0.90
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disk over 90% on {{ $labels.name }}"
+          description: "Root filesystem on {{ $labels.name }} is {{ $value | humanizePercentage }} full."
+
+      - alert: FleetDiskCritical
+        expr: (fleet_live_disk_used_bytes / fleet_live_disk_total_bytes) > 0.97
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Disk over 97% on {{ $labels.name }}"
+          description: "Root filesystem on {{ $labels.name }} is critically full ({{ $value | humanizePercentage }})."
+
+      - alert: FleetMemoryHigh
+        expr: (fleet_live_memory_used_bytes / fleet_live_memory_total_bytes) > 0.92
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Memory over 92% on {{ $labels.name }}"
+          description: "Sustained high memory use on {{ $labels.name }}."
+
+      - alert: FleetCPUSaturated
+        expr: fleet_live_cpu_percent > 90
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "CPU pinned above 90% on {{ $labels.name }}"
+          description: "{{ $labels.name }} has been above 90% CPU for 15 minutes."
+
+      - alert: FleetSecurityUpdatesPending
+        expr: fleet_machine_updates_security > 0
+        for: 24h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} security updates pending on {{ $labels.name }}"
+          description: "Unapplied security updates on {{ $labels.name }} for over 24h. Push the patch module."
+
+      - alert: FleetRebootRequired
+        expr: fleet_machine_reboot_required > 0
+        for: 1h
+        labels: { severity: info }
+        annotations:
+          summary: "{{ $labels.name }} needs a reboot"
+          description: "A package update on {{ $labels.name }} requires a reboot to complete."
+
+      - alert: FleetModuleFailed
+        expr: fleet_module_applied == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Module {{ $labels.module }} failed on {{ $labels.name }}"
+          description: "{{ $labels.module }}@{{ $labels.version }} is in failed state on {{ $labels.name }}."
+
+      - alert: FleetGPUOverheating
+        expr: fleet_live_gpu_temp_celsius > 85
+        for: 3m
+        labels: { severity: warning }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} hot on {{ $labels.name }}"
+          description: "GPU {{ $labels.index }} on {{ $labels.name }} is at {{ $value }}C."

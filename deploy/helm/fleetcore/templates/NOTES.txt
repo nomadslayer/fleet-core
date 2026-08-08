@@ -1,0 +1,35 @@
+fleetcore {{ .Chart.AppVersion }} installed as {{ .Release.Name }}.
+
+{{- if .Values.controlPlane.enabled }}
+
+CONTROL PLANE
+  Admin API (bearer token, never expose publicly):
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "fleetcore.fullname" . }}-admin {{ .Values.controlPlane.service.admin.port }}
+    Then open http://127.0.0.1:{{ .Values.controlPlane.service.admin.port }}/dashboard
+
+  Admin token:
+    kubectl -n {{ .Release.Namespace }} get secret {{ .Values.controlPlane.existingSecret | default (printf "%s-admin" (include "fleetcore.fullname" .)) }} -o jsonpath='{.data.FLEET_ADMIN_TOKEN}' | base64 -d
+
+  CA fingerprint (pass to agents as agent.caFingerprint):
+    kubectl -n {{ .Release.Namespace }} logs sts/{{ include "fleetcore.fullname" . }} | grep -o 'ca_sha256=[a-f0-9]*' | head -1 | cut -d= -f2
+
+  Agents dial: {{ include "fleetcore.agentServer" . }}
+  That name MUST appear in controlPlane.sans, or enrolment fails x509
+  verification. Current SANs: {{ .Values.controlPlane.sans }}
+
+  Not HA: replicas is pinned to 1. The bus is in-process, the live metrics
+  registry is per-process memory, and the CA lives on the PVC. Back up the
+  PVC — losing it orphans every agent identity.
+{{- end }}
+
+{{- if .Values.agent.enabled }}
+
+AGENT DaemonSet
+  Running on every node (tolerations: {{ .Values.agent.tolerations | toJson }}).
+  Pod-level usage uses the kubelet Summary API when RBAC allows it, and falls
+  back to reading cgroups directly when it does not.
+{{- else }}
+
+AGENT is disabled. Enable with:
+  --set agent.enabled=true --set agent.enrollToken=<token from POST /admin/tokens>
+{{- end }}

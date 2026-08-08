@@ -1,0 +1,115 @@
+# fleetcore Helm chart.
+#
+# Two independent halves, either of which can be disabled:
+#   controlPlane — the server. StatefulSet, replicas is pinned to 1 (see below).
+#   agent        — the node agent, as a DaemonSet, so every node enrols itself.
+#
+# The two are deliberately separable: the usual production shape is a control
+# plane in one cluster (or on a VM) and agents on many clusters and hosts.
+
+image:
+  repository: fleetcore
+  tag: latest
+  pullPolicy: IfNotPresent
+
+controlPlane:
+  enabled: true
+
+  # NOT a tunable. The in-process bus has no cross-instance fan-out, the live
+  # metrics registry is per-process memory, and the CA lives on the volume —
+  # two replicas would mint two CAs and orphan half the fleet. The chart fails
+  # rendering if this is raised, rather than letting it break at runtime.
+  replicas: 1
+
+  # Extra SANs for the server certificate. The chart always includes the
+  # in-cluster service names derived from the release name, so this only
+  # needs the EXTERNAL name or IP that off-cluster agents dial.
+  # Getting this wrong is the single most common failure: agents reject the
+  # server with "x509: certificate is valid for ..., not <name>".
+  extraSans: ""
+
+  adminToken: ""            # generated and stored in a Secret when empty
+  existingSecret: ""        # or supply your own, with key FLEET_ADMIN_TOKEN
+
+  maxCommandHistory: 20
+
+  # Empty = local JSON file on the PVC. Point at sqld or Turso for a real DB.
+  dbUrl: ""
+  dbToken: ""
+
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""        # "" = cluster default
+    # Holds the CA and module-signing keys. Losing it orphans every agent
+    # identity and invalidates every module signature. Back it up.
+
+  service:
+    # The agent API is mTLS with a private CA. An L7 Ingress that terminates
+    # TLS destroys the client certificate, and identity comes exclusively from
+    # that certificate — so this must be a TCP passthrough path.
+    agent:
+      type: ClusterIP       # LoadBalancer / NodePort to expose outside
+      port: 8443
+      nodePort: ""
+      annotations: {}
+    # Admin API: bearer-token only. Keep it ClusterIP and reach it by
+    # port-forward, or front it with an authenticating proxy.
+    admin:
+      type: ClusterIP
+      port: 8080
+
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 512Mi}
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+agent:
+  enabled: false
+
+  # Where the agents dial. In-cluster default targets the chart's own service.
+  server: ""                # "" -> https://<release>-fleetcore:8443
+  # Enrolment token minted from the admin API (POST /admin/tokens). Use a
+  # multi-use token with a TTL so new nodes self-enrol.
+  enrollToken: ""
+  existingSecret: ""        # or supply your own, key FLEET_TOKEN
+  # sha256 of the control-plane CA cert. Strongly recommended: without it the
+  # first connection is trust-on-first-use.
+  caFingerprint: ""
+
+  metricsInterval: 10s
+  heartbeat: 30s
+  topProcesses: 15
+
+  # Pod-level usage needs the kubelet's authenticated stats endpoint. With
+  # rbac.create the chart makes a ServiceAccount with nodes/stats and projects
+  # a token; without it the agent falls back to reading cgroups directly.
+  kubelet:
+    useServiceAccountToken: true
+    url: ""                 # "" -> https://127.0.0.1:10250
+
+  rbac:
+    create: true
+
+  # hostPID is required: without it the agent sees only its own PID namespace
+  # and reports a single process instead of the node's.
+  hostPID: true
+  hostNetwork: true
+
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+  tolerations:
+    - operator: Exists      # run on control-plane and tainted nodes too
+  nodeSelector: {}
+  priorityClassName: ""
+
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  name: ""
