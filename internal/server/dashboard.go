@@ -94,8 +94,8 @@ border-radius:10px;padding:12px 18px;margin-bottom:16px}
    line or given reserved space rather than being allowed to push rows
    down on some cards and not others. */
 .mcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;
-cursor:pointer;transition:border-color .15s,transform .15s;display:flex;flex-direction:column}
-.mcard:hover{border-color:var(--accent);transform:translateY(-2px)}
+cursor:pointer;transition:border-color .15s;display:flex;flex-direction:column}
+.mcard:hover{border-color:var(--accent)}
 .mcard.down{border-color:var(--down-border)}
 .mhead{display:flex;align-items:center;gap:8px}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--accent)}
@@ -105,6 +105,11 @@ cursor:pointer;transition:border-color .15s,transform .15s;display:flex;flex-dir
 .mseen{margin-left:auto;font-size:11px;color:var(--muted);flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
 .mseen.down{color:var(--danger)}
 .mseen.live{color:var(--accent)}
+/* Removal is destructive, so it stays quiet until you reach for it — but a
+   machine that is down is exactly the one you came to remove, so show it. */
+.mrm{opacity:.45;transition:opacity .15s;padding:1px 7px;font-size:11px;line-height:1.4;flex:none}
+.mcard:hover .mrm,.mcard.down .mrm{opacity:1}
+.mrm:hover{border-color:var(--danger);color:var(--danger)}
 .mip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--blue);margin:1px 0 0 16px}
 .mip .noip{color:var(--muted);font-style:italic;font-family:system-ui,sans-serif}
 .msub{color:var(--muted);font-size:12px;margin:3px 0 11px 16px;
@@ -213,6 +218,7 @@ word-break:break-word;max-height:220px;overflow:auto}
 <section id="detail" class="hidden">
   <div class="detail-head">
     <button id="back" class="ghost">&larr; Fleet</button>
+    <button id="d-remove" class="ghost mrm" style="opacity:1;order:99">Remove machine</button>
     <h2 id="d-name"></h2>
     <span id="d-state"></span>
     <span id="d-id" class="mono"></span>
@@ -516,9 +522,11 @@ function stat(k,v,bad){
 function machineCard(m){
   var el=document.createElement("div");
   el.className="mcard";
+  el.dataset.id=m.id;   // delegation reads this; closures do not survive re-render
   el.innerHTML=
     "<div class='mhead'><span class='dot'></span><span class='mname'></span>"+
-    "<span class='mseen'></span></div>"+
+    "<span class='mseen'></span>"+
+    "<button class='ghost mrm' title='Remove this machine from the fleet'>Remove</button></div>"+
     "<div class='mip'></div><div class='msub'></div>"+
     "<div class='bars'>"+barRow("cpu")+barRow("mem")+barRow("disk")+"</div>"+
     "<div class='nodata hidden'></div>"+
@@ -537,6 +545,29 @@ function machineCard(m){
       {fill:rows[2].querySelector(".bfill"), val:rows[2].querySelector(".bval")}
     ]
   };
+}
+// Deleting a machine is also the revocation path: identity is checked against
+// the store on every request, so the certificate stops working immediately.
+// An agent that still holds an enrolment token will re-enrol as a NEW machine,
+// which is worth saying out loud before the operator clicks through.
+function removeMachine(m){
+  var name=m.name||m.id;
+  var up=isUp(m);
+  if(!confirm("Remove "+name+" from the fleet?\n\n"+
+      "This deletes its record and revokes its certificate immediately.\n"+
+      (up?"This machine is still ONLINE - if its agent holds an enrolment token it will re-enrol as a new machine.\n":"")+
+      "\nThis cannot be undone."))return;
+  fetch("/admin/machines/"+encodeURIComponent(m.id),
+    {method:"DELETE",headers:{Authorization:"Bearer "+tok}})
+  .then(function(r){
+    if(!r.ok&&r.status!==204)throw new Error("HTTP "+r.status);
+    // Drop local traces so the card cannot briefly reappear from cache.
+    delete hist[m.id];
+    if(cards[m.id]){cards[m.id].el.remove();delete cards[m.id]}
+    delete prevUp[m.id];
+    if(selected===m.id)closeDetail();
+    return refresh();
+  }).catch(function(e){alert("remove failed: "+e.message)});
 }
 function barRow(label){
   return "<div class='brow'><span class='blabel'>"+label+"</span>"+
@@ -1090,6 +1121,15 @@ $("theme").onclick=function(){
 };
 $("cmdlist").addEventListener("click",onCmdClick);
 $("queuelist").addEventListener("click",onCmdClick);
+$("mgrid").addEventListener("click",function(e){
+  var b=e.target.closest?e.target.closest(".mrm"):null;
+  if(!b)return;
+  e.stopPropagation(); e.preventDefault();
+  var card=b.closest(".mcard");
+  var id=card&&card.dataset.id;
+  var m=id&&findMachine(id);
+  if(m)removeMachine(m);
+});
 $("filter").addEventListener("input",function(){
   filterText=this.value.trim().toLowerCase();
   renderOverview();
@@ -1097,6 +1137,10 @@ $("filter").addEventListener("input",function(){
 $("connect").onclick=connect;
 $("forget").onclick=function(){disconnect();$("status").textContent=""};
 $("back").onclick=closeDetail;
+$("d-remove").onclick=function(){
+  var m=findMachine(selected);
+  if(m)removeMachine(m);
+};
 $("health").onclick=function(){if(selected)closeDetail()};
 $("token").addEventListener("keydown",function(e){if(e.key==="Enter")connect()});
 

@@ -99,6 +99,13 @@ agent:
   hostPID: true
   hostNetwork: true
 
+  # Where the node keeps its agent identity (private key + certificate).
+  # Must persist across pod restarts, or every restart re-enrols as a NEW
+  # machine. Change it if the node also runs a host-installed agent against
+  # a different control plane: a stale identity there is reused, and the old
+  # CA then fails to verify the new server.
+  stateDir: /var/lib/fleet-agent
+
   resources:
     requests: {cpu: 20m, memory: 32Mi}
     limits: {memory: 128Mi}

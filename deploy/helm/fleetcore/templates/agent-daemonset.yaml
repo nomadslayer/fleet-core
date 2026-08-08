@@ -85,7 +85,7 @@ spec:
               drop: [ALL]
           resources: {{- toYaml .Values.agent.resources | nindent 12 }}
           volumeMounts:
-            - {name: state, mountPath: /var/lib/fleet-agent}
+            - {name: state, mountPath: /var/lib/fleet-agent}   # in-container path is fixed; host path is agent.stateDir
             # /proc and /sys are the entire metrics source; /var/log/pods is
             # the only credential-free way to map a pod cgroup UID to a name.
             - {name: proc, mountPath: /host/proc, readOnly: true}
@@ -94,7 +94,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: state
-          hostPath: {path: /var/lib/fleet-agent, type: DirectoryOrCreate}
+          hostPath: {path: {{ .Values.agent.stateDir }}, type: DirectoryOrCreate}
         - name: proc
           hostPath: {path: /proc}
         - name: cgroup
